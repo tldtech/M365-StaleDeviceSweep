@@ -1,0 +1,17 @@
+{
+  "bindings": [
+    {
+      "name": "Timer",
+      "type": "timerTrigger",
+      "direction": "in",
+      "schedule": "0 */5 * * * *"
+    },
+    {
+      "name": "reportBlob",
+      "type": "blob",
+      "direction": "out",
+      "path": "reports/entra-stale-devices-{datetime:yyyy-MM-ddTHH-mm-ssZ}.json",
+      "connection": "AzureWebJobsStorage"
+    }
+  ]
+}
