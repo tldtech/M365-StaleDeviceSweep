@@ -18,10 +18,12 @@ $extensionName  = ($env:EXTENSION_NAME ?? 'com.staleDeviceSweep')
 
 $nowUtc = (Get-Date).ToUniversalTime()
 $cutoffUtc = $nowUtc.AddDays(-$staleDays)
+$nowUtcStr = $nowUtc.ToString('o')
+$cutoffUtcStr = $cutoffUtc.ToString('o')
 
 Write-Host "=== Entra stale device sweep (v1.1: Entra-only) ==="
-Write-Host "Now (UTC):     $($nowUtc.ToString('o'))"
-Write-Host "Cutoff (UTC):  $($cutoffUtc.ToString('o'))"
+Write-Host "Now (UTC):     $nowUtcStr"
+Write-Host "Cutoff (UTC):  $cutoffUtcStr"
 Write-Host "Mode:          $mode"
 Write-Host "Graph:         $graphApiVersion"
 Write-Host "Max actions:   $maxActions"
@@ -212,7 +214,8 @@ try {
     $devices = Invoke-GraphGetAll -Uri $uri -AccessToken $token
     Write-Host "Devices fetched: $($devices.Count)"
 
-    $results = @(foreach ($d in $devices) {
+    $results = [System.Collections.Generic.List[object]]::new()
+    foreach ($d in $devices) {
         $classification = Get-DeviceClassification -Device $d -CutoffUtc $cutoffUtc
 
         $lastSignInUtc = ConvertTo-GraphDateUtc -Value $d.approximateLastSignInDateTime
@@ -227,7 +230,7 @@ try {
             $null
         }
 
-        [pscustomobject]@{
+        $results.Add([pscustomobject]@{
             id                            = $d.id
             displayName                   = $d.displayName
             deviceId                      = $d.deviceId
@@ -240,10 +243,10 @@ try {
             lastSignInUtc                 = if ($lastSignInUtc) { $lastSignInUtc.ToString('o') } else { $null }
             classification                = $classification
             daysSinceLastActivity         = $daysSinceLastActivity
-            staleThresholdDateUtc         = $cutoffUtc.ToString('o')
+            staleThresholdDateUtc         = $cutoffUtcStr
             staleDaysThreshold            = $staleDays
-        }
-    })
+        })
+    }
 
     $counts = @($results | Group-Object classification | ForEach-Object {
         [pscustomobject]@{ classification = $_.Name; count = $_.Count }
@@ -252,7 +255,7 @@ try {
     # Build report object (we'll append action sections below)
     $report = [pscustomobject]@{
         version            = "v1.1-entra-only"
-        generatedAtUtc     = $nowUtc.ToString('o')
+        generatedAtUtc     = $nowUtcStr
         staleDaysThreshold = $staleDays
         totalDevices       = $devices.Count
         summary            = $counts
@@ -266,15 +269,18 @@ try {
     # Only act on trusted stale classifications
     $candidates = @($results | Where-Object { $_.classification -in @('Stale','Stale-NoSignIn') })
 
-    $actionPlan = @($candidates | Select-Object -First $maxActions | ForEach-Object {
-        [pscustomobject]@{
-            deviceObjectId = $_.id
-            displayName    = $_.displayName
-            classification = $_.classification
-            daysSince      = $_.daysSinceLastActivity
+    $actionPlan = [System.Collections.Generic.List[object]]::new()
+    $plannedCount = [Math]::Min($candidates.Count, $maxActions)
+    for ($i = 0; $i -lt $plannedCount; $i++) {
+        $c = $candidates[$i]
+        $actionPlan.Add([pscustomobject]@{
+            deviceObjectId = $c.id
+            displayName    = $c.displayName
+            classification = $c.classification
+            daysSince      = $c.daysSinceLastActivity
             plannedAction  = $mode
-        }
-    })
+        })
+    }
 
     $actionSummary = [pscustomobject]@{
         modeRequested      = $mode
@@ -287,7 +293,7 @@ try {
         extensionName      = $extensionName
     }
 
-    $actionsExecuted = @()
+    $actionsExecuted = [System.Collections.Generic.List[object]]::new()
 
     switch ($mode) {
         'report' {
@@ -308,11 +314,11 @@ try {
 
             foreach ($a in $actionPlan) {
                 Disable-EntraDevice -DeviceObjectId $a.deviceObjectId -AccessToken $token -GraphApiVersion $graphApiVersion
-                $actionsExecuted += [pscustomobject]@{
+                $actionsExecuted.Add([pscustomobject]@{
                     deviceObjectId = $a.deviceObjectId
                     action         = 'disable'
                     status         = 'ok'
-                }
+                })
             }
         }
 
@@ -329,18 +335,18 @@ try {
                     status             = "stale"
                     classification     = $a.classification
                     version            = "v1.1-entra-only"
-                    evaluatedAtUtc     = $nowUtc.ToString('o')
+                    evaluatedAtUtc     = $nowUtcStr
                     staleDaysThreshold = $staleDays
-                    cutoffUtc          = $cutoffUtc.ToString('o')
+                    cutoffUtc          = $cutoffUtcStr
                 }
 
-                $result = Upsert-DeviceOpenExtension -DeviceObjectId $a.deviceObjectId -AccessToken $token -GraphApiVersion $graphApiVersion -ExtensionName $extensionName -Properties $props
+                $result = Update-DeviceOpenExtension -DeviceObjectId $a.deviceObjectId -AccessToken $token -GraphApiVersion $graphApiVersion -ExtensionName $extensionName -Properties $props
 
-                $actionsExecuted += [pscustomobject]@{
+                $actionsExecuted.Add([pscustomobject]@{
                     deviceObjectId = $a.deviceObjectId
                     action         = 'tag'
                     status         = $result
-                }
+                })
             }
         }
 
