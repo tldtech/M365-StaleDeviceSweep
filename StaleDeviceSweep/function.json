@@ -19,6 +19,20 @@
       "direction": "out",
       "path": "reports/stale-devices-summary-{datetime:yyyy-MM-ddTHH-mm-ssZ}.txt",
       "connection": "AzureWebJobsStorage"
+    },
+    {
+      "name": "actionPlanCsvBlob",
+      "type": "blob",
+      "direction": "out",
+      "path": "reports/actionPlan-{datetime:HHmmss}.csv",
+      "connection": "AzureWebJobsStorage"
+    },
+    {
+      "name": "inventoryCsvBlob",
+      "type": "blob",
+      "direction": "out",
+      "path": "reports/inventory-{datetime:HHmmss}.csv",
+      "connection": "AzureWebJobsStorage"
     }
   ]
 }
