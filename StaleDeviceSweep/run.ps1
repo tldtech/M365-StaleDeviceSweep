@@ -90,42 +90,42 @@
 
 .ENVIRONMENT
     Core:
-      STALE_DAYS=90
-      MODE=detect | disable | tag | decide | execute
-      GRAPH_API_VERSION=v1.0
-      MAX_ACTIONS=50
+        STALE_DAYS=90
+        MODE=detect | disable | tag | decide | execute
+        GRAPH_API_VERSION=v1.0
+        MAX_ACTIONS=50
 
     Safety confirms (legacy):
-      CONFIRM_DISABLE=false
-      CONFIRM_TAG=false
+        CONFIRM_DISABLE=false
+        CONFIRM_TAG=false
 
     Intune:
-      INCLUDE_INTUNE=false
-      ACTIVITY_SOURCE=signin | intune | mostRecent
+        INCLUDE_INTUNE=false
+        ACTIVITY_SOURCE=signin | intune | mostRecent
 
     Decision rules (used by MODE=decide/execute; recommended INCLUDE_INTUNE=true):
-      INTUNE_STALE_DAYS=90               # default: STALE_DAYS
-      REQUIRE_BOTH_STALE_FOR_DISABLE=true
-      DONT_DISABLE_IF_INTUNE_RECENT_SYNC=true
-      INTUNE_RECENT_SYNC_DAYS=14
-      DONT_DISABLE_IF_COMPLIANT=true
-      ONLY_DISABLE_IF_MANAGEDAGENT_IN=mdm,easmdm  # optional; empty disables this constraint
-      ALLOW_DISABLE_ON_DUPLICATE=false            # if duplicate Intune matches exist
+        INTUNE_STALE_DAYS=90               # default: STALE_DAYS
+        REQUIRE_BOTH_STALE_FOR_DISABLE=true
+        DONT_DISABLE_IF_INTUNE_RECENT_SYNC=true
+        INTUNE_RECENT_SYNC_DAYS=14
+        DONT_DISABLE_IF_COMPLIANT=true
+        ONLY_DISABLE_IF_MANAGEDAGENT_IN=mdm,easmdm  # optional; empty disables this constraint
+        ALLOW_DISABLE_ON_DUPLICATE=false            # if duplicate Intune matches exist
 
     Intune action confirms (used by MODE=execute only):
-      CONFIRM_INTUNE_RETIRE=false
-      CONFIRM_INTUNE_WIPE=false
-      CONFIRM_INTUNE_DELETE=false
+        CONFIRM_INTUNE_RETIRE=false
+        CONFIRM_INTUNE_WIPE=false
+        CONFIRM_INTUNE_DELETE=false
 
     Per-action throttles (optional; defaults shown):
-      MAX_DISABLE=50
-      MAX_TAG=50
-      MAX_RETIRE=25
-      MAX_WIPE=5
-      MAX_INTUNE_DELETE=25
+        MAX_DISABLE=50
+        MAX_TAG=50
+        MAX_RETIRE=25
+        MAX_WIPE=5
+        MAX_INTUNE_DELETE=25
 
     Extension:
-      EXTENSION_NAME=STALE
+        EXTENSION_NAME=STALE
 
 .PERMISSIONS (Graph application permissions; managed identity / app-only)
     - Entra read:    Device.Read.All
