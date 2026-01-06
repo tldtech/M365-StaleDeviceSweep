@@ -10,7 +10,14 @@
       "name": "reportBlob",
       "type": "blob",
       "direction": "out",
-      "path": "reports/entra-stale-devices-{datetime:yyyy-MM-ddTHH-mm-ssZ}.json",
+      "path": "reports/stale-devices-{datetime:yyyy-MM-ddTHH-mm-ssZ}.json",
+      "connection": "AzureWebJobsStorage"
+    },
+    {
+      "name": "summaryBlob",
+      "type": "blob",
+      "direction": "out",
+      "path": "reports/stale-devices-summary-{datetime:yyyy-MM-ddTHH-mm-ssZ}.txt",
       "connection": "AzureWebJobsStorage"
     }
   ]

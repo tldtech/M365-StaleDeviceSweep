@@ -276,6 +276,92 @@ function Update-DeviceOpenExtension {
 }
 
 # ---------------------------
+# Summary Helper Function
+# ---------------------------
+
+function New-HumanSummaryText {
+    param(
+        [Parameter(Mandatory)] [string] $Version,
+        [Parameter(Mandatory)] [string] $GeneratedAtUtc,
+        [Parameter(Mandatory)] [string] $Mode,
+        [Parameter(Mandatory)] [int]    $StaleDaysThreshold,
+        [Parameter(Mandatory)] [string] $CutoffUtc,
+        [Parameter(Mandatory)] [bool]   $IncludeIntune,
+        [Parameter(Mandatory)] [string] $ActivitySource,
+        [Parameter(Mandatory)] $Counts,         # array of {classification,count}
+        [Parameter(Mandatory)] $ActionSummary,  # your object
+        [Parameter(Mandatory)] $ActionPlan,     # list
+        [Parameter(Mandatory)] $ActionsExecuted,
+        [Parameter(Mandatory)] [int] $TotalDevices
+    )
+
+    $countsMap = @{}
+    foreach ($c in $Counts) { $countsMap[$c.classification] = [int]$c.count }
+
+    $active = ($countsMap['Active'] ?? 0)
+    $stale = ($countsMap['Stale'] ?? 0)
+    $staleNoSignIn = ($countsMap['Stale-NoSignIn'] ?? 0)
+    $unknown = ($countsMap['Unknown'] ?? 0)
+
+    $candidateCount = [int]$ActionSummary.candidateCount
+    $plannedCount = [int]$ActionSummary.plannedActionCount
+    $executedCount = [int]$ActionsExecuted.Count
+
+    $preview = @(
+        $ActionPlan | Select-Object -First 25 displayName, classification, daysSince, plannedAction
+    )
+
+    $lines = New-Object System.Collections.Generic.List[string]
+
+    $lines.Add("Entra Stale Device Sweep — $Version")
+    $lines.Add("Generated (UTC): $GeneratedAtUtc")
+    $lines.Add("Mode: $Mode")
+    $lines.Add("Threshold: $StaleDaysThreshold days   Cutoff (UTC): $CutoffUtc")
+    $lines.Add("Intune enrichment: $IncludeIntune   Activity source: $ActivitySource")
+    $lines.Add("")
+
+    $lines.Add("Inventory Summary")
+    $lines.Add("  Total devices:        $TotalDevices")
+    $lines.Add("  Active:               $active")
+    $lines.Add("  Stale:                $stale")
+    $lines.Add("  Stale (no sign-in):   $staleNoSignIn")
+    $lines.Add("  Unknown:              $unknown")
+    $lines.Add("")
+
+    $lines.Add("Action Summary")
+    $lines.Add("  Candidates:           $candidateCount")
+    $lines.Add("  Planned actions:      $plannedCount (MAX_ACTIONS=$($ActionSummary.maxActions))")
+    $lines.Add("  Will execute:         $($ActionSummary.willExecute)")
+    $lines.Add("  Executed actions:     $executedCount")
+    $lines.Add("  Confirm disable:      $($ActionSummary.confirmDisable)")
+    $lines.Add("  Confirm tag:          $($ActionSummary.confirmTag)")
+    $lines.Add("  Extension name:       $($ActionSummary.extensionName)")
+    $lines.Add("")
+
+    $lines.Add("Planned Action Preview (first $([Math]::Min(25, $plannedCount)))")
+    if ($preview.Count -eq 0) {
+        $lines.Add("  (none)")
+    }
+    else {
+        $lines.Add("  DisplayName | Classification | DaysSince | Action")
+        $lines.Add("  ---------- | -------------- | --------- | ------")
+        foreach ($p in $preview) {
+            $dn = ($p.displayName ?? "").ToString().Trim()
+            if ($dn.Length -gt 60) { $dn = $dn.Substring(0, 57) + "..." }
+            $lines.Add(("  {0} | {1} | {2} | {3}" -f $dn, $p.classification, $p.daysSince, $p.plannedAction))
+        }
+    }
+
+    $lines.Add("")
+    $lines.Add("Notes")
+    $lines.Add("  - 'Unknown' devices are never acted on.")
+    $lines.Add("  - 'Stale-NoSignIn' means no activity timestamp was available; createdDateTime was older than cutoff.")
+    $lines.Add("")
+
+    return ($lines -join "`n")
+}
+
+# ---------------------------
 # Staleness Evaluation Logic
 # ---------------------------
 
@@ -506,6 +592,7 @@ try {
     # ---------------------------
     # Step 4: Build Action Plan
     # ---------------------------
+    
     $candidates = @($results | Where-Object { $_.classification -in @('Stale', 'Stale-NoSignIn') })
 
     $actionPlan = [System.Collections.Generic.List[object]]::new()
@@ -606,10 +693,27 @@ try {
     $report | Add-Member -NotePropertyName actionPlan -NotePropertyValue $actionPlan -Force
     $report | Add-Member -NotePropertyName actionsExecuted -NotePropertyValue $actionsExecuted -Force
 
+    # JSON report output
     $json = $report | ConvertTo-Json -Depth 10
     Push-OutputBinding -Name reportBlob -Value $json
 
-    Write-Host "Report written to blob output binding."
+    # Human-readable summary output
+    $summaryText = New-HumanSummaryText `
+        -Version $report.version `
+        -GeneratedAtUtc $nowUtcStr `
+        -Mode $mode `
+        -StaleDaysThreshold $staleDays `
+        -CutoffUtc $cutoffUtcStr `
+        -IncludeIntune $includeIntune `
+        -ActivitySource $activitySource `
+        -Counts $counts `
+        -ActionSummary $actionSummary `
+        -ActionPlan $actionPlan `
+        -ActionsExecuted $actionsExecuted `
+        -TotalDevices $devices.Count
+    Push-OutputBinding -Name summaryBlob -Value $summaryText
+
+    Write-Host "Reports written to blob output binding."
 }
 catch {
     Write-Error $_
