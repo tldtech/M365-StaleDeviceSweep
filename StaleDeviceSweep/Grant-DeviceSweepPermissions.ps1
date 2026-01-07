@@ -21,8 +21,8 @@ $ErrorActionPreference = 'Stop'
 #>
 
 param(
-    [Parameter(Mandatory=$false)]
-    [string]$ServicePrincipalObjectId = '4e8943ad-b64d-4312-9717-12af9e84a212'  # Microsoft Graph Command Line Tools; the Microsoft Entra object id of the enterprise application to which we are granting the app role.
+    [Parameter(Mandatory=$true)]
+    [string]$ServicePrincipalObjectId # The Microsoft Entra object id of the enterprise application to which we are granting the app role.
 )
 
 # Available permission bundles

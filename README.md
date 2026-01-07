@@ -128,8 +128,5 @@ Choose the appropriate permission bundle based on your deployment needs:
 Use the included `Grant-DeviceSweepPermissions.ps1` script to interactively grant application-type permissions:
 
 ```powershell
-# Run with default identity (Microsoft Graph Command Line Tools)
-.\Grant-DeviceSweepPermissions.ps1
-
-# Or specify a different service principal
+# Specify a service principal, managed identity or enterprise application.
 .\Grant-DeviceSweepPermissions.ps1 -ServicePrincipalObjectId "your-object-id-here"
