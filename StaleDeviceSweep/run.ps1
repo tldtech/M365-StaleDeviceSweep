@@ -132,6 +132,12 @@
     - Entra write:   Device.ReadWrite.All (required for disable + open extensions tagging)
     - Intune read:   DeviceManagementManagedDevices.Read.All (required when INCLUDE_INTUNE=true)
     - Intune write:  DeviceManagementManagedDevices.ReadWrite.All (required for retire/wipe/delete)
+
+.TUNING GUIDANCE
+    Small environments (<100 devices): ACTION_PARALLELISM=3
+    Medium environments (100-1000): ACTION_PARALLELISM=5 (default)
+    Large environments (1000-10000): ACTION_PARALLELISM=8
+    Very large (10000+): ACTION_PARALLELISM=10 (max recommended to avoid throttling)
 #>
 
 param($Timer)
@@ -191,6 +197,9 @@ $intuneCutoffUtc = $nowUtc.AddDays(-$intuneStaleDays)
 $nowUtcStr = $nowUtc.ToString('o')
 $cutoffUtcStr = $cutoffUtc.ToString('o')
 $intuneCutoffUtcStr = $intuneCutoffUtc.ToString('o')
+
+# Parallelism for actions (tune based on environment size)
+$actionParallelism = [int]($env:ACTION_PARALLELISM ?? 5)  # 3-10 recommended
 
 Write-Host "=== Entra stale device sweep (v2.0: Intune decisioning/actions) ==="
 Write-Host "Now (UTC):               $nowUtcStr"
@@ -329,7 +338,8 @@ function Invoke-GraphWithRetry {
                 # Use Retry-After if provided, otherwise exponential backoff
                 if ($retryAfter) {
                     $waitSeconds = [int]$retryAfter
-                } else {
+                }
+                else {
                     $waitSeconds = $delay
                     $delay = [Math]::Min($delay * 2, 60)  # Cap at 60 seconds
                 }
@@ -358,7 +368,7 @@ function Disable-EntraDevice {
     )
 
     $uri = "https://graph.microsoft.com/$GraphApiVersion/devices/$DeviceObjectId"
-    Invoke-Graph -Method PATCH -Uri $uri -AccessToken $AccessToken -Body @{ accountEnabled = $false } | Out-Null
+    Invoke-GraphWithRetry -Method PATCH -Uri $uri -AccessToken $AccessToken -Body @{ accountEnabled = $false } | Out-Null
 }
 
 function Update-DeviceOpenExtension {
@@ -372,18 +382,18 @@ function Update-DeviceOpenExtension {
 
     $patchUri = "https://graph.microsoft.com/$GraphApiVersion/devices/$DeviceObjectId/extensions/$ExtensionName"
     try {
-        Invoke-Graph -Method PATCH -Uri $patchUri -AccessToken $AccessToken -Body $Properties | Out-Null
+        Invoke-GraphWithRetry -Method PATCH -Uri $patchUri -AccessToken $AccessToken -Body $Properties | Out-Null
         return "patched"
     }
     catch {
         if ($_ -match 'HTTP 404') {
-            $postUri = "https://graph.microsoft.com/$GraphApiVersion/devices/$DeviceObjectId/extensions"
+            $postUri = "https://graph.microsoft.com/$GraphApiVersion/devices/$DeviceObjectId/extensions/$ExtensionName"
             $body = @{
                 "@odata.type" = "microsoft.graph.openTypeExtension"
                 extensionName = $ExtensionName
             } + $Properties
 
-            Invoke-Graph -Method POST -Uri $postUri -AccessToken $AccessToken -Body $body | Out-Null
+            Invoke-GraphWithRetry -Method POST -Uri $postUri -AccessToken $AccessToken -Body $body | Out-Null
             return "created"
         }
         throw
@@ -402,7 +412,7 @@ function Invoke-IntuneRetire {
     )
 
     $uri = "https://graph.microsoft.com/$GraphApiVersion/deviceManagement/managedDevices/$ManagedDeviceId/retire"
-    Invoke-Graph -Method POST -Uri $uri -AccessToken $AccessToken | Out-Null
+    Invoke-GraphWithRetry -Method POST -Uri $uri -AccessToken $AccessToken | Out-Null
 }
 
 function Invoke-IntuneWipe {
@@ -414,7 +424,7 @@ function Invoke-IntuneWipe {
 
     $uri = "https://graph.microsoft.com/$GraphApiVersion/deviceManagement/managedDevices/$ManagedDeviceId/wipe"
     # Optional body parameters exist; we keep it empty for safety.
-    Invoke-Graph -Method POST -Uri $uri -AccessToken $AccessToken | Out-Null
+    Invoke-GraphWithRetry -Method POST -Uri $uri -AccessToken $AccessToken | Out-Null
 }
 
 function Remove-IntuneManagedDevice {
@@ -425,7 +435,7 @@ function Remove-IntuneManagedDevice {
     )
 
     $uri = "https://graph.microsoft.com/$GraphApiVersion/deviceManagement/managedDevices/$ManagedDeviceId"
-    Invoke-Graph -Method DELETE -Uri $uri -AccessToken $AccessToken | Out-Null
+    Invoke-GraphWithRetry -Method DELETE -Uri $uri -AccessToken $AccessToken | Out-Null
 }
 
 # ---------------------------
@@ -1165,113 +1175,223 @@ try {
         'execute' {
             $actionSummary.willExecute = $true
 
-            # Track per-action counts with hashtable for cleaner lookups
-            $actionCounts = @{ disable = 0; tag = 0; retire = 0; wipe = 0; delete = 0 }
-            $actionLimits = @{ disable = $maxDisable; tag = $maxTag; retire = $maxRetire; wipe = $maxWipe; delete = $maxIntuneDelete }
-            $actionConfirms = @{ disable = $confirmDisable; tag = $confirmTag; retire = $confirmIntuneRetire; wipe = $confirmIntuneWipe; delete = $confirmIntuneDelete }
-            $actionConfirmNames = @{ disable = 'CONFIRM_DISABLE'; tag = 'CONFIRM_TAG'; retire = 'CONFIRM_INTUNE_RETIRE'; wipe = 'CONFIRM_INTUNE_WIPE'; delete = 'CONFIRM_INTUNE_DELETE' }
+            # Group actions by type for parallel processing
+            $actionsByType = $actionPlan | Group-Object plannedAction
 
-            foreach ($a in $actionPlan) {
-                $act = ($a.plannedAction ?? 'none').ToLowerInvariant()
+            foreach ($group in $actionsByType) {
+                $act = ($group.Name ?? 'none').ToLowerInvariant()
+                $items = $group.Group
 
                 switch ($act) {
                     'disable' {
-                        if ($actionCounts['disable'] -ge $actionLimits['disable']) { break }
-                        if (-not $actionConfirms['disable']) {
-                            $actionsExecuted.Add([pscustomobject]@{ deviceObjectId = $a.deviceObjectId; action = 'disable'; status = 'skipped'; message = "$($actionConfirmNames['disable']) not true" })
-                            break
-                        }
-                        $result = Invoke-ActionWithErrorHandling -ActionType 'disable' -ActionItem $a -ActionBlock {
-                            Disable-EntraDevice -DeviceObjectId $a.deviceObjectId -AccessToken $token -GraphApiVersion $graphApiVersion
-                        }
-                        $actionsExecuted.Add($result)
-                        $actionCounts['disable']++
+                        if (-not $confirmDisable) { continue }
+                        $toProcess = $items | Select-Object -First $maxDisable
+                
+                        $results = $toProcess | ForEach-Object -Parallel {
+                            $a = $_
+                            $token = $using:token
+                            $graphApiVersion = $using:graphApiVersion
+                    
+                            # Copy functions into parallel scope (needed for -Parallel)
+                            $invokeGraph = ${using:function:Invoke-GraphWithRetry}
+                    
+                            try {
+                                $uri = "https://graph.microsoft.com/$graphApiVersion/devices/$($a.deviceObjectId)"
+                                & $invokeGraph -Method PATCH -Uri $uri -AccessToken $token -Body @{ accountEnabled = $false }
+                                [pscustomobject]@{ deviceObjectId = $a.deviceObjectId; action = 'disable'; status = 'ok'; reason = $a.decisionReason }
+                            }
+                            catch {
+                                [pscustomobject]@{ deviceObjectId = $a.deviceObjectId; action = 'disable'; status = 'error'; message = $_.Exception.Message }
+                            }
+                        } -ThrottleLimit $actionParallelism
+                
+                        $results | ForEach-Object { $actionsExecuted.Add($_) }
                     }
 
                     'tag' {
-                        if ($actionCounts['tag'] -ge $actionLimits['tag']) { break }
-                        if (-not $actionConfirms['tag']) {
-                            $actionsExecuted.Add([pscustomobject]@{ deviceObjectId = $a.deviceObjectId; action = 'tag'; status = 'skipped'; message = "$($actionConfirmNames['tag']) not true" })
-                            break
-                        }
-                        $props = Get-TagProperties `
-                            -ActionItem $a `
-                            -Version $report.version `
-                            -NowUtcStr $nowUtcStr `
-                            -StaleDays $staleDays `
-                            -CutoffUtcStr $cutoffUtcStr `
-                            -IncludeIntune $includeIntune `
-                            -ActivitySource $activitySource `
-                            -UseDecisionEngine $true `
-                            -IntuneStaleDays $intuneStaleDays `
-                            -IntuneCutoffUtcStr $intuneCutoffUtcStr
-
-                        $result = Invoke-ActionWithErrorHandling -ActionType 'tag' -ActionItem $a -ActionBlock {
-                            $tagResult = Update-DeviceOpenExtension `
-                                -DeviceObjectId $a.deviceObjectId `
-                                -AccessToken $token `
-                                -GraphApiVersion $graphApiVersion `
-                                -ExtensionName $extensionName `
-                                -Properties $props
-                            $result.status = $tagResult
-                        }
-                        $actionsExecuted.Add($result)
-                        $actionCounts['tag']++
+                        if (-not $confirmTag) { continue }
+                        $toProcess = $items | Select-Object -First $maxTag
+                
+                        $results = $toProcess | ForEach-Object -Parallel {
+                            $a = $_
+                            $token = $using:token
+                            $graphApiVersion = $using:graphApiVersion
+                            $extensionName = $using:extensionName
+                            $report = $using:report
+                            $nowUtcStr = $using:nowUtcStr
+                            $staleDays = $using:staleDays
+                            $cutoffUtcStr = $using:cutoffUtcStr
+                            $includeIntune = $using:includeIntune
+                            $activitySource = $using:activitySource
+                            $intuneStaleDays = $using:intuneStaleDays
+                            $intuneCutoffUtcStr = $using:intuneCutoffUtcStr
+                    
+                            # Build tag properties inline (simpler than copying function)
+                            $props = @{
+                                status                = "stale"
+                                classification        = $a.classification
+                                version               = $report.version
+                                evaluatedAtUtc        = $nowUtcStr
+                                staleDaysThreshold    = $staleDays
+                                cutoffUtc             = $cutoffUtcStr
+                                includeIntune         = $includeIntune
+                                activitySource        = $activitySource
+                                decisionEngine        = $true
+                                decisionPlannedAction = $a.plannedAction
+                                decisionReason        = $a.decisionReason
+                                intuneStaleDays       = $intuneStaleDays
+                                intuneCutoffUtc       = $intuneCutoffUtcStr
+                                intuneMatchStatus     = $a.intuneMatchStatus
+                                intuneManagedDeviceId = $a.intuneManagedDeviceId
+                            }
+                    
+                            $invokeGraph = ${using:function:Invoke-GraphWithRetry}
+                    
+                            try {
+                                $patchUri = "https://graph.microsoft.com/$graphApiVersion/devices/$($a.deviceObjectId)/extensions/$extensionName"
+                                try {
+                                    & $invokeGraph -Method PATCH -Uri $patchUri -AccessToken $token -Body $props
+                                    $status = 'patched'
+                                }
+                                catch {
+                                    if ($_ -match 'HTTP 404') {
+                                        $postUri = "https://graph.microsoft.com/$graphApiVersion/devices/$($a.deviceObjectId)/extensions"
+                                        $body = @{ "@odata.type" = "microsoft.graph.openTypeExtension"; extensionName = $extensionName } + $props
+                                        & $invokeGraph -Method POST -Uri $postUri -AccessToken $token -Body $body
+                                        $status = 'created'
+                                    }
+                                    else { throw }
+                                }
+                                [pscustomobject]@{ deviceObjectId = $a.deviceObjectId; action = 'tag'; status = $status; reason = $a.decisionReason }
+                            }
+                            catch {
+                                [pscustomobject]@{ deviceObjectId = $a.deviceObjectId; action = 'tag'; status = 'error'; message = $_.Exception.Message }
+                            }
+                        } -ThrottleLimit $actionParallelism
+                
+                        $results | ForEach-Object { $actionsExecuted.Add($_) }
                     }
 
                     'intune-retire' {
-                        if ($actionCounts['retire'] -ge $actionLimits['retire']) { break }
-                        if (-not $actionConfirms['retire']) {
-                            $actionsExecuted.Add([pscustomobject]@{ deviceObjectId = $a.deviceObjectId; action = 'intune-retire'; status = 'skipped'; message = "$($actionConfirmNames['retire']) not true" })
-                            break
-                        }
-                        if (-not $a.intuneManagedDeviceId) {
-                            $actionsExecuted.Add([pscustomobject]@{ deviceObjectId = $a.deviceObjectId; action = 'intune-retire'; status = 'skipped'; message = 'No intuneManagedDeviceId' })
-                            break
-                        }
-                        $result = Invoke-ActionWithErrorHandling -ActionType 'intune-retire' -ActionItem $a -IntuneManagedDeviceId $a.intuneManagedDeviceId -ActionBlock {
-                            Invoke-IntuneRetire -ManagedDeviceId $a.intuneManagedDeviceId -AccessToken $token -GraphApiVersion $graphApiVersion
-                        }
-                        $actionsExecuted.Add($result)
-                        $actionCounts['retire']++
+                        if (-not $confirmIntuneRetire) { continue }
+                        $toProcess = $items | Select-Object -First $maxRetire
+                
+                        $results = $toProcess | ForEach-Object -Parallel {
+                            $a = $_
+                            $token = $using:token
+                            $graphApiVersion = $using:graphApiVersion
+                            $invokeGraph = ${using:function:Invoke-GraphWithRetry}
+                    
+                            try {
+                                if (-not $a.intuneManagedDeviceId) {
+                                    throw "No Intune managed device ID available"
+                                }
+                                $uri = "https://graph.microsoft.com/$graphApiVersion/deviceManagement/managedDevices/$($a.intuneManagedDeviceId)/retire"
+                                & $invokeGraph -Method POST -Uri $uri -AccessToken $token
+                                [pscustomobject]@{ 
+                                    deviceObjectId        = $a.deviceObjectId; 
+                                    action                = 'intune-retire'; 
+                                    status                = 'ok'; 
+                                    reason                = $a.decisionReason;
+                                    intuneManagedDeviceId = $a.intuneManagedDeviceId
+                                }
+                            }
+                            catch {
+                                [pscustomobject]@{ 
+                                    deviceObjectId        = $a.deviceObjectId; 
+                                    action                = 'intune-retire'; 
+                                    status                = 'error'; 
+                                    message               = $_.Exception.Message;
+                                    intuneManagedDeviceId = $a.intuneManagedDeviceId
+                                }
+                            }
+                        } -ThrottleLimit $actionParallelism
+                
+                        $results | ForEach-Object { $actionsExecuted.Add($_) }
                     }
 
                     'intune-wipe' {
-                        if ($actionCounts['wipe'] -ge $actionLimits['wipe']) { break }
-                        if (-not $actionConfirms['wipe']) {
-                            $actionsExecuted.Add([pscustomobject]@{ deviceObjectId = $a.deviceObjectId; action = 'intune-wipe'; status = 'skipped'; message = "$($actionConfirmNames['wipe']) not true" })
-                            break
-                        }
-                        if (-not $a.intuneManagedDeviceId) {
-                            $actionsExecuted.Add([pscustomobject]@{ deviceObjectId = $a.deviceObjectId; action = 'intune-wipe'; status = 'skipped'; message = 'No intuneManagedDeviceId' })
-                            break
-                        }
-                        $result = Invoke-ActionWithErrorHandling -ActionType 'intune-wipe' -ActionItem $a -IntuneManagedDeviceId $a.intuneManagedDeviceId -ActionBlock {
-                            Invoke-IntuneWipe -ManagedDeviceId $a.intuneManagedDeviceId -AccessToken $token -GraphApiVersion $graphApiVersion
-                        }
-                        $actionsExecuted.Add($result)
-                        $actionCounts['wipe']++
+                        if (-not $confirmIntuneWipe) { continue }
+                        $toProcess = $items | Select-Object -First $maxWipe
+                
+                        $results = $toProcess | ForEach-Object -Parallel {
+                            $a = $_
+                            $token = $using:token
+                            $graphApiVersion = $using:graphApiVersion
+                            $invokeGraph = ${using:function:Invoke-GraphWithRetry}
+                    
+                            try {
+                                if (-not $a.intuneManagedDeviceId) {
+                                    throw "No Intune managed device ID available"
+                                }
+                                $uri = "https://graph.microsoft.com/$graphApiVersion/deviceManagement/managedDevices/$($a.intuneManagedDeviceId)/wipe"
+                                & $invokeGraph -Method POST -Uri $uri -AccessToken $token
+                                [pscustomobject]@{ 
+                                    deviceObjectId        = $a.deviceObjectId; 
+                                    action                = 'intune-wipe'; 
+                                    status                = 'ok'; 
+                                    reason                = $a.decisionReason;
+                                    intuneManagedDeviceId = $a.intuneManagedDeviceId
+                                }
+                            }
+                            catch {
+                                [pscustomobject]@{ 
+                                    deviceObjectId        = $a.deviceObjectId; 
+                                    action                = 'intune-wipe'; 
+                                    status                = 'error'; 
+                                    message               = $_.Exception.Message;
+                                    intuneManagedDeviceId = $a.intuneManagedDeviceId
+                                }
+                            }
+                        } -ThrottleLimit $actionParallelism
+                
+                        $results | ForEach-Object { $actionsExecuted.Add($_) }
                     }
 
                     'intune-delete' {
-                        if ($actionCounts['delete'] -ge $actionLimits['delete']) { break }
-                        if (-not $actionConfirms['delete']) {
-                            $actionsExecuted.Add([pscustomobject]@{ deviceObjectId = $a.deviceObjectId; action = 'intune-delete'; status = 'skipped'; message = "$($actionConfirmNames['delete']) not true" })
-                            break
-                        }
-                        if (-not $a.intuneManagedDeviceId) {
-                            $actionsExecuted.Add([pscustomobject]@{ deviceObjectId = $a.deviceObjectId; action = 'intune-delete'; status = 'skipped'; message = 'No intuneManagedDeviceId' })
-                            break
-                        }
-                        $result = Invoke-ActionWithErrorHandling -ActionType 'intune-delete' -ActionItem $a -IntuneManagedDeviceId $a.intuneManagedDeviceId -ActionBlock {
-                            Remove-IntuneManagedDevice -ManagedDeviceId $a.intuneManagedDeviceId -AccessToken $token -GraphApiVersion $graphApiVersion
-                        }
-                        $actionsExecuted.Add($result)
-                        $actionCounts['delete']++
+                        if (-not $confirmIntuneDelete) { continue }
+                        $toProcess = $items | Select-Object -First $maxIntuneDelete
+                
+                        $results = $toProcess | ForEach-Object -Parallel {
+                            $a = $_
+                            $token = $using:token
+                            $graphApiVersion = $using:graphApiVersion
+                            $invokeGraph = ${using:function:Invoke-GraphWithRetry}
+                    
+                            try {
+                                if (-not $a.intuneManagedDeviceId) {
+                                    throw "No Intune managed device ID available"
+                                }
+                                $uri = "https://graph.microsoft.com/$graphApiVersion/deviceManagement/managedDevices/$($a.intuneManagedDeviceId)"
+                                & $invokeGraph -Method DELETE -Uri $uri -AccessToken $token
+                                [pscustomobject]@{ 
+                                    deviceObjectId        = $a.deviceObjectId; 
+                                    action                = 'intune-delete'; 
+                                    status                = 'ok'; 
+                                    reason                = $a.decisionReason;
+                                    intuneManagedDeviceId = $a.intuneManagedDeviceId
+                                }
+                            }
+                            catch {
+                                [pscustomobject]@{ 
+                                    deviceObjectId        = $a.deviceObjectId; 
+                                    action                = 'intune-delete'; 
+                                    status                = 'error'; 
+                                    message               = $_.Exception.Message;
+                                    intuneManagedDeviceId = $a.intuneManagedDeviceId
+                                }
+                            }
+                        } -ThrottleLimit $actionParallelism
+                
+                        $results | ForEach-Object { $actionsExecuted.Add($_) }
+                    }
+
+                    'none' {
+                        # No action needed
                     }
 
                     default {
-                        # none
+                        Write-Warning "Unknown planned action '$act' for device group. Skipping."
                     }
                 }
             }
