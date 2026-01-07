@@ -33,11 +33,40 @@ The function is triggered by a timer using a [cron expression](https://en.wikipe
 
 ### Required Permissions
 
-The Managed Identity or service principal needs the following Microsoft Graph API permission:
+The Managed Identity or service principal needs the following Microsoft Graph API permissions:
 
-- `Device.ReadWrite.All` (Application permission)
+#### Permission Bundles
 
-Use the included `AppEntraPermissions.ps1` script to grant permissions.
+Choose the appropriate permission bundle based on your deployment needs:
+
+**1. Entra Read Only** (Minimal - Reporting Only)
+- `Device.Read.All` - Read Entra ID device information
+- **Use case**: Detection/reporting mode only (`MODE=detect`)
+
+**2. Entra Read + Write** (Basic Actions)
+- `Device.ReadWrite.All` - Read/Disable devices and tag with open extensions
+- **Use case**: Disable/tag modes without Intune integration (`MODE=disable`, `MODE=tag`)
+
+**3. Entra + Intune Read** (Intune-Aware Decisions)
+- `Device.Read.All` - Read Entra ID device information
+- `DeviceManagementManagedDevices.Read.All` - Read Intune managed device data
+- **Use case**: Intune-aware decision planning (`MODE=decide` with `INCLUDE_INTUNE=true`)
+
+**4. Entra + Intune Full Access** (Complete Automation)
+- `Device.ReadWrite.All` - Read/Disable devices and tag with open extensions
+- `DeviceManagementManagedDevices.ReadWrite.All` - Read, Retire, wipe, and delete Intune devices
+- **Use case**: Full automation with all actions (`MODE=execute` with all Intune actions enabled)
+
+#### Granting Permissions
+
+Use the included `AppEntraPermissions.ps1` script to interactively grant permissions:
+
+```powershell
+# Run with default identity (Microsoft Graph Command Line Tools)
+.\AppEntraPermissions.ps1
+
+# Or specify a different service principal
+.\AppEntraPermissions.ps1 -ServicePrincipalObjectId "your-object-id-here"
 
 ## Device Classification Logic
 
