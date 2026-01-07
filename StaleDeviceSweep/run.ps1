@@ -276,14 +276,15 @@ function Invoke-Graph {
 function Invoke-GraphGetAll {
     param(
         [Parameter(Mandatory)] [string] $Uri,
-        [Parameter(Mandatory)] [string] $AccessToken
+        [Parameter(Mandatory)] [string] $AccessToken,
+        [int] $MaxRetries = 5
     )
 
     $items = New-Object System.Collections.Generic.List[object]
     $next = $Uri
 
     while ($next) {
-        $resp = Invoke-Graph -Method GET -Uri $next -AccessToken $AccessToken
+        $resp = Invoke-GraphWithRetry -Method GET -Uri $next -AccessToken $AccessToken -MaxRetries $MaxRetries
 
         if ($resp.value) {
             foreach ($v in $resp.value) { $items.Add($v) }
@@ -295,6 +296,56 @@ function Invoke-GraphGetAll {
     $items
 }
 
+function Invoke-GraphWithRetry {
+    param(
+        [Parameter(Mandatory)] [ValidateSet('GET', 'POST', 'PATCH', 'DELETE')] [string] $Method,
+        [Parameter(Mandatory)] [string] $Uri,
+        [Parameter(Mandatory)] [string] $AccessToken,
+        [object] $Body = $null,
+        [int] $MaxRetries = 5,
+        [int] $InitialDelaySeconds = 2
+    )
+
+    $attempt = 0
+    $delay = $InitialDelaySeconds
+
+    while ($attempt -lt $MaxRetries) {
+        try {
+            return Invoke-Graph -Method $Method -Uri $Uri -AccessToken $AccessToken -Body $Body
+        }
+        catch {
+            $attempt++
+            $statusCode = $null
+            $retryAfter = $null
+
+            # Extract status code and Retry-After header
+            if ($_.Exception.Response) {
+                $statusCode = [int]$_.Exception.Response.StatusCode
+                $retryAfter = $_.Exception.Response.Headers['Retry-After']
+            }
+
+            # Only retry on transient errors
+            if ($statusCode -in @(429, 503, 504) -and $attempt -lt $MaxRetries) {
+                # Use Retry-After if provided, otherwise exponential backoff
+                if ($retryAfter) {
+                    $waitSeconds = [int]$retryAfter
+                } else {
+                    $waitSeconds = $delay
+                    $delay = [Math]::Min($delay * 2, 60)  # Cap at 60 seconds
+                }
+
+                Write-Warning "Graph API returned $statusCode. Retry $attempt/$MaxRetries after $waitSeconds seconds..."
+                Start-Sleep -Seconds $waitSeconds
+                continue
+            }
+
+            # Non-retriable error or max retries exceeded
+            throw
+        }
+    }
+
+    throw "Max retries ($MaxRetries) exceeded for $Method $Uri"
+}
 # ---------------------------
 # Entra Actions
 # ---------------------------
