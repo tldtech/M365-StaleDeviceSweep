@@ -164,7 +164,7 @@ try {
         # Grant the app role
         try {
             Write-Host "  Granting..." -ForegroundColor Cyan
-            $result = New-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $ServicePrincipalObjectId -BodyParameter $appRoleAssignment
+            New-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $ServicePrincipalObjectId -BodyParameter $appRoleAssignment | Out-Null
             Write-Host "  ✓ Granted successfully" -ForegroundColor Green
             $grantedCount++
         }
