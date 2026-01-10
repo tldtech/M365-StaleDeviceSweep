@@ -316,7 +316,7 @@
     "variables": {
         "planName": "[toLower(concat(parameters('namePrefix'), '-fc-', uniqueString(resourceGroup().id)))]",
         "functionAppName": "[toLower(concat(parameters('namePrefix'), '-func-', uniqueString(resourceGroup().id)))]",
-        "storageAccountName": "[toLower(substring(concat('sa', parameters('namePrefix'), uniqueString(resourceGroup().id, 'stg'), '000000000000000000000000'), 0, 24))]""logAnalyticsWorkspaceName": "[toLower(concat(parameters('namePrefix'), '-law-', uniqueString(resourceGroup().id)))]",
+        "storageAccountName": "[toLower(substring(concat('sa', parameters('namePrefix'), uniqueString(resourceGroup().id, 'stg'), '000000000000000000000000'), 0, 24))]",
         "appInsightsName": "[toLower(concat(parameters('namePrefix'), '-ai-', uniqueString(resourceGroup().id)))]",
         "storageSku": "Standard_LRS"
     },
