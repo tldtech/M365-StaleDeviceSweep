@@ -17,6 +17,7 @@ This function runs on a timer schedule to scan all devices in your Entra ID tena
 - **Safety Controls**: Per-action confirmation flags and throttle limits
 - **Dual Authentication**: Supports both Managed Identity (production) and Azure CLI (local development)
 - **Comprehensive Reporting**: JSON reports and human-readable summaries to Azure Blob Storage
+- **Azure Monitor Workbook**: Pre-built workbook for visualizing run history, trends, and metrics
 
 ## Version History
 
@@ -131,6 +132,32 @@ Use the included `Grant-DeviceSweepPermissions.ps1` script to interactively gran
 # Specify a service principal, managed identity or enterprise application.
 .\Grant-DeviceSweepPermissions.ps1 -ServicePrincipalObjectId "your-object-id-here"
 ```
+
+## Monitoring
+
+### Azure Monitor Workbook
+
+A pre-built Azure Monitor Workbook is included for visualizing function execution and device management trends:
+
+**Location**: `StaleDeviceSweep/Workbooks/M365-StaleDeviceSweep.json`
+
+**Features**:
+- Recent function runs with configuration and results
+- Device classification trends over time
+- Device distribution pie chart (latest run)
+- Actions executed over time
+- Errors and warnings tracking
+- Performance metrics (success rate, duration)
+
+**Setup**:
+1. Open Azure Monitor in the Azure Portal
+2. Navigate to **Workbooks** > **+ New**
+3. Click the **Advanced Editor** button (code icon)
+4. Paste the contents of `M365-StaleDeviceSweep.json`
+5. Click **Apply** and save the workbook
+6. Select your Log Analytics workspace from the dropdown
+
+The workbook queries Application Insights logs and correlates CFG (configuration) and RESULT (execution summary) structured logs with function execution data.
 
 #### Deployment
 [![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Ftldtech%2FM365---Device-MGMT%2Frefs%2Fheads%2Fmain%2FInfra%2Fazuredeploy.json)
