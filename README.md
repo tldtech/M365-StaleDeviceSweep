@@ -90,6 +90,8 @@ This function runs on a timer schedule to scan all devices in your Entra ID tena
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `EXTENSION_NAME` | `STALE` | Open extension name for tagging |
+| `OUTPUT_ACTION_PLAN_CSV` | `false` | Generate action plan CSV output to blob storage |
+| `OUTPUT_INVENTORY_CSV` | `false` | Generate full device inventory CSV output to blob storage |
 
 ### Schedule
 

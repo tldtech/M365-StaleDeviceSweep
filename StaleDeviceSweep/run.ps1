@@ -133,6 +133,10 @@
     Extension:
         EXTENSION_NAME=STALE
     
+    Optional outputs (disabled by default):
+        OUTPUT_ACTION_PLAN_CSV=false    # Set to true to generate action plan CSV
+        OUTPUT_INVENTORY_CSV=false      # Set to true to generate full device inventory CSV
+    
     Exceptions (devices never acted on):
         EXCEPTION_GROUP_ID=<guid>                      # Entra group containing protected devices
         EXCEPTION_NAME_PATTERNS=VIP-*,Executive-*      # Comma-separated wildcards
@@ -200,6 +204,10 @@ $maxTag = [int]($env:MAX_TAG ?? $maxActions)
 $maxRetire = [int]($env:MAX_RETIRE ?? 25)
 $maxWipe = [int]($env:MAX_WIPE ?? 5)
 $maxIntuneDelete = [int]($env:MAX_INTUNE_DELETE ?? 25)
+
+# CSV outputs (optional, disabled by default)
+$outputActionPlanCsv = ($env:OUTPUT_ACTION_PLAN_CSV ?? 'false') -eq 'true'
+$outputInventoryCsv = ($env:OUTPUT_INVENTORY_CSV ?? 'false') -eq 'true'
 
 # Times (UTC)
 $nowUtc = (Get-Date).ToUniversalTime()
@@ -1573,10 +1581,20 @@ try {
     $report | Add-Member -NotePropertyName actionPlan -NotePropertyValue $actionPlan -Force
     $report | Add-Member -NotePropertyName actionsExecuted -NotePropertyValue $actionsExecuted -Force
 
-    # Outputs
+    # Outputs - JSON report
+    Write-Host "Preparing JSON report..."
     $json = $report | ConvertTo-Json -Depth 12
+    if ([string]::IsNullOrWhiteSpace($json)) {
+        Write-Error "JSON report is empty or null!"
+        throw "Failed to generate JSON report"
+    }
+    $jsonBytes = [System.Text.Encoding]::UTF8.GetByteCount($json)
+    Write-Host "JSON report size: $jsonBytes bytes ($($report.items.Count) items)"
     Push-OutputBinding -Name reportBlob -Value $json
+    Write-Host "✓ JSON report written to reportBlob"
 
+    # Outputs - Summary text
+    Write-Host "Preparing summary text..."
     $summaryText = New-HumanSummaryText `
         -Version $report.version `
         -GeneratedAtUtc $nowUtcStr `
@@ -1592,13 +1610,59 @@ try {
         -ActionPlan $actionPlan `
         -ActionsExecuted $actionsExecuted `
         -TotalDevices $devices.Count
+    
+    if ([string]::IsNullOrWhiteSpace($summaryText)) {
+        Write-Error "Summary text is empty or null!"
+        throw "Failed to generate summary text"
+    }
+    $summaryBytes = [System.Text.Encoding]::UTF8.GetByteCount($summaryText)
+    Write-Host "Summary text size: $summaryBytes bytes"
     Write-Host "=== SUMMARY TEXT START ==="
     Write-Host $summaryText
     Write-Host "=== SUMMARY TEXT END ==="
-    Write-Host "Summary length: $($summaryText.Length) bytes"
     Push-OutputBinding -Name summaryBlob -Value $summaryText
-    Write-Host "Summary text (first 100 chars): $($summaryText.Substring(0, [Math]::Min(100, $summaryText.Length)))"
-    Write-Host "Reports written to blob output bindings."
+    Write-Host "✓ Summary text written to summaryBlob"
+
+    # Outputs - Action Plan CSV (optional, only if enabled)
+    if ($outputActionPlanCsv -and $actionPlan.Count -gt 0) {
+        Write-Host "Preparing action plan CSV..."
+        $actionPlanCsv = $actionPlan | ConvertTo-Csv -NoTypeInformation | Out-String
+        if ([string]::IsNullOrWhiteSpace($actionPlanCsv)) {
+            Write-Warning "Action plan CSV is empty despite having $($actionPlan.Count) planned actions"
+        } else {
+            $actionPlanBytes = [System.Text.Encoding]::UTF8.GetByteCount($actionPlanCsv)
+            Write-Host "Action plan CSV size: $actionPlanBytes bytes ($($actionPlan.Count) actions)"
+            Push-OutputBinding -Name actionPlanCsvBlob -Value $actionPlanCsv
+            Write-Host "✓ Action plan CSV written to actionPlanCsvBlob"
+        }
+    } elseif ($outputActionPlanCsv -and $actionPlan.Count -eq 0) {
+        Write-Host "Action plan CSV enabled but no actions to write (0 actions planned)"
+    } else {
+        Write-Host "Action plan CSV output disabled (set OUTPUT_ACTION_PLAN_CSV=true to enable)"
+    }
+
+    # Outputs - Inventory CSV (optional, only if enabled)
+    if ($outputInventoryCsv) {
+        Write-Host "Preparing inventory CSV..."
+        $inventoryCsv = $report.items | Select-Object -Property deviceId, displayName, classification, 
+            entraActivityUtc, entraStale, intuneActivityUtc, intuneStale, 
+            accountEnabled, osVersion, trustType, managementType, 
+            intuneCorrelation, intuneDeviceId, intuneCompliant, intuneEncrypted, 
+            recommendedAction, reasoning | ConvertTo-Csv -NoTypeInformation | Out-String
+        
+        if ([string]::IsNullOrWhiteSpace($inventoryCsv)) {
+            Write-Warning "Inventory CSV is empty despite having $($report.items.Count) items"
+        } else {
+            $inventoryBytes = [System.Text.Encoding]::UTF8.GetByteCount($inventoryCsv)
+            Write-Host "Inventory CSV size: $inventoryBytes bytes ($($report.items.Count) devices)"
+            Push-OutputBinding -Name inventoryCsvBlob -Value $inventoryCsv
+            Write-Host "✓ Inventory CSV written to inventoryCsvBlob"
+        }
+    } else {
+        Write-Host "Inventory CSV output disabled (set OUTPUT_INVENTORY_CSV=true to enable)"
+    }
+
+    Write-Host "All blob outputs completed successfully."
 
     # Emit structured result for workbook metrics
     $resultEvent = @{
@@ -1620,6 +1684,26 @@ try {
         }
     }
     Write-Host ("RESULT " + ($resultEvent | ConvertTo-Json -Compress))
+    
+    # Final verification summary
+    Write-Host "`n=========================================="
+    Write-Host "BLOB OUTPUTS VERIFICATION SUMMARY"
+    Write-Host "=========================================="
+    Write-Host "JSON Report:       $jsonBytes bytes"
+    Write-Host "Summary Text:      $summaryBytes bytes"
+    if ($outputActionPlanCsv -and $actionPlan.Count -gt 0) {
+        Write-Host "Action Plan CSV:   $actionPlanBytes bytes ($($actionPlan.Count) actions)"
+    } elseif ($outputActionPlanCsv) {
+        Write-Host "Action Plan CSV:   Not written (no actions planned)"
+    } else {
+        Write-Host "Action Plan CSV:   Disabled"
+    }
+    if ($outputInventoryCsv) {
+        Write-Host "Inventory CSV:     $inventoryBytes bytes ($($report.items.Count) devices)"
+    } else {
+        Write-Host "Inventory CSV:     Disabled"
+    }
+    Write-Host "==========================================`n"
 }
 catch {
     Write-Error $_

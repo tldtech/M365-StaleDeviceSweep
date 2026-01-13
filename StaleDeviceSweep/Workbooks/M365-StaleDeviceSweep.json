@@ -216,14 +216,14 @@
         {
             "type": 1,
             "content": {
-                "json": "---\n### Errors & Warnings\nAny exceptions or warnings from recent runs."
+                "json": "---\n### Errors\nAny exceptions or errors from recent runs. Note: 404 blob errors are excluded as they are expected when checking if output blobs exist before creation."
             }
         },
         {
             "type": 3,
             "content": {
                 "version": "KqlItem/1.0",
-                "query": "let targetOps = AppRequests\n| where Name has \"StaleDeviceSweep\"\n| project OperationId;\n\nlet exceptions = AppExceptions\n| where OperationId in (targetOps)\n| project TimeGenerated, Type = \"Exception\", SeverityLevel, Message = substring(tostring(OuterMessage), 0, 200), OperationId;\n\nlet warnings = AppTraces\n| where OperationId in (targetOps)\n| where SeverityLevel >= 2 or Message has \"Error\" or Message has \"Failed\"\n| project TimeGenerated, Type = \"Warning\", SeverityLevel, Message = substring(Message, 0, 200), OperationId;\n\nunion exceptions, warnings\n| order by TimeGenerated desc",
+                "query": "let targetOps = AppRequests\n| where Name has \"StaleDeviceSweep\"\n| project OperationId;\n\nlet exceptions = AppExceptions\n| where OperationId in (targetOps)\n| project TimeGenerated, Type = \"Exception\", SeverityLevel, Message = substring(tostring(OuterMessage), 0, 200), OperationId;\n\nlet errors = AppTraces\n| where OperationId in (targetOps)\n| where SeverityLevel >= 3 or Message has \"Error\" or Message has \"Failed\"\n// Exclude expected 404 blob not found errors (Azure Functions checks blob existence before creation)\n| where Message !contains \"404 The specified blob does not exist\"\n| project TimeGenerated, Type = \"Error\", SeverityLevel, Message = substring(Message, 0, 200), OperationId;\n\nunion exceptions, errors\n| order by TimeGenerated desc",
                 "size": 0,
                 "timeContextFromParameter": "TimeRange",
                 "queryType": 0,
