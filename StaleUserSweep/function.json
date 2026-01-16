@@ -1,0 +1,38 @@
+{
+  "bindings": [
+    {
+      "name": "Timer",
+      "type": "timerTrigger",
+      "direction": "in",
+      "schedule": "0 0 2 * * *"
+    },
+    {
+      "name": "reportBlob",
+      "type": "blob",
+      "direction": "out",
+      "path": "stale-user-reports/{DateTime}-report.json",
+      "connection": "AzureWebJobsStorage"
+    },
+    {
+      "name": "summaryBlob",
+      "type": "blob",
+      "direction": "out",
+      "path": "stale-user-reports/{DateTime}-summary.txt",
+      "connection": "AzureWebJobsStorage"
+    },
+    {
+      "name": "actionPlanBlob",
+      "type": "blob",
+      "direction": "out",
+      "path": "stale-user-reports/{DateTime}-action-plan.csv",
+      "connection": "AzureWebJobsStorage"
+    },
+    {
+      "name": "inventoryBlob",
+      "type": "blob",
+      "direction": "out",
+      "path": "stale-user-reports/{DateTime}-inventory.csv",
+      "connection": "AzureWebJobsStorage"
+    }
+  ]
+}
