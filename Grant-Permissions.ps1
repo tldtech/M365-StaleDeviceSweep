@@ -1,6 +1,3 @@
-Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Stop'
-
 <#
 .SYNOPSIS
     Grant Microsoft Graph API permissions to a service principal for stale device and user management.
@@ -30,25 +27,27 @@ $ErrorActionPreference = 'Stop'
 
 .EXAMPLE
     # Grant device management permissions
-    .\Grant-DeviceSweepPermissions.ps1 -ServicePrincipalObjectId "12345678-1234-1234-1234-123456789abc"
+    .\Grant-Permissions.ps1 -ServicePrincipalObjectId "12345678-1234-1234-1234-123456789abc"
 
 .EXAMPLE
     # Grant user management permissions
-    .\Grant-DeviceSweepPermissions.ps1 -ServicePrincipalObjectId "12345678-1234-1234-1234-123456789abc" -ResourceType User
+    .\Grant-Permissions.ps1 -ServicePrincipalObjectId "12345678-1234-1234-1234-123456789abc" -ResourceType User
 
 .EXAMPLE
     # Grant both device and user management permissions
-    .\Grant-DeviceSweepPermissions.ps1 -ServicePrincipalObjectId "12345678-1234-1234-1234-123456789abc" -ResourceType Both
+    .\Grant-Permissions.ps1 -ServicePrincipalObjectId "12345678-1234-1234-1234-123456789abc" -ResourceType Both
 #>
 
 param(
     [Parameter(Mandatory=$true)]
     [string]$ServicePrincipalObjectId, # The Microsoft Entra object id of the enterprise application to which we are granting the app role.
     
-    [Parameter(Mandatory=$false)]
     [ValidateSet('Device', 'User', 'Both')]
     [string]$ResourceType = 'Device'
 )
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
 
 # Available permission bundles for devices
 $devicePermissionBundles = @(
@@ -72,15 +71,9 @@ $devicePermissionBundles = @(
     },
     [PSCustomObject]@{
         Name = 'Device: Entra + Intune Full Access'
-        Description = 'Full access: Disable, tag, retire, wipe, and delete devices'
-        Permissions = @('Device.ReadWrite.All', 'DeviceManagementManagedDevices.ReadWrite.All')
-        Recommended = 'For complete automation (MODE=execute with all actions)'
-    },
-    [PSCustomObject]@{
-        Name = 'Device: Full Access + Exception Groups'
-        Description = 'Full access with support for exception groups (EXCEPTION_GROUP_ID)'
+        Description = 'Full access: Disable, tag, retire, wipe, delete devices'
         Permissions = @('Device.ReadWrite.All', 'DeviceManagementManagedDevices.ReadWrite.All', 'GroupMember.Read.All')
-        Recommended = 'For complete automation with group-based device exceptions'
+        Recommended = 'For complete automation (MODE=execute with all actions)'
     }
 )
 
