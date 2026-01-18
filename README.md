@@ -323,7 +323,7 @@ OUTPUT_INVENTORY_CSV=true
 
 A pre-built Azure Monitor Workbook is included for visualizing function execution and device management trends:
 
-**Location**: `Workbooks/M365-StaleDeviceSweep.json`
+**Location**: `Workbooks/M365-StaleSweep.json`
 
 **Features**:
 - Recent function runs with configuration and results
@@ -337,11 +337,12 @@ A pre-built Azure Monitor Workbook is included for visualizing function executio
 1. Open Azure Monitor in the Azure Portal
 2. Navigate to **Workbooks** > **+ New**
 3. Click the **Advanced Editor** button (code icon)
-4. Paste the contents of `M365-StaleDeviceSweep.json`
+4. Paste the contents of `M365-StaleSweep.json`
 5. Click **Apply** and save the workbook
 6. Select your Log Analytics workspace from the dropdown
 
 The workbook queries Application Insights logs and correlates CFG (configuration) and RESULT (execution summary) structured logs with function execution data.
 
 #### Deployment
+
 [![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Ftldtech%2FM365---Device-MGMT%2Frefs%2Fheads%2Fmain%2FInfra%2Fazuredeploy.json)
